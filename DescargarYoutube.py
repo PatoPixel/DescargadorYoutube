@@ -6,29 +6,24 @@ import zipfile
 import re
 import tempfile
 
-# --- 🐞 DEBUG: Función para mostrar mensajes en pantalla ---
-def debug_log(msg):
-    # Esto imprimirá en la consola negra de la nube y en la pantalla
-    print(f"DEBUG: {msg}")
-    with st.expander("🐞 Log de Depuración (Abre esto si falla)", expanded=True):
-        st.write(msg)
-
-# --- 1. CONFIGURACIÓN DE RUTAS (Modo Nube Blindado) ---
-# Usamos una carpeta única por sesión para evitar errores de permisos en la nube
+# --- 1. CONFIGURACIÓN DE RUTAS ---
+# ### CAMBIO: Usamos una subcarpeta con ID único para evitar choques en la nube
 if 'session_id' not in st.session_state:
     st.session_state.session_id = next(tempfile._get_candidate_names())
 
-# 🐞 DEBUG: Vemos dónde se va a guardar
 DOWNLOAD_PATH = os.path.join(tempfile.gettempdir(), f"descargas_{st.session_state.session_id}")
-debug_log(f"Ruta de descarga configurada: {DOWNLOAD_PATH}")
-
-if not os.path.exists(DOWNLOAD_PATH):
-    os.makedirs(DOWNLOAD_PATH, exist_ok=True)
+os.makedirs(DOWNLOAD_PATH, exist_ok=True)
 
 st.set_page_config(page_title="Descargador YouTube", page_icon="⬇️")
 st.title("Descargador YouTube")
 
-# --- 2. SESSION STATE ---
+# --- AREA DE DEBUG (NUEVO) ---
+debug_expander = st.expander("🕵️ Ver Logs de Depuración", expanded=True)
+def log_debug(msg):
+    debug_expander.write(f"🐞 {msg}")
+    print(f"DEBUG: {msg}")
+
+# --- 2. SESSION STATE (TU CÓDIGO ORIGINAL) ---
 if 'download_ready' not in st.session_state:
     st.session_state.download_ready = False
 if 'playlist_title' not in st.session_state:
@@ -38,7 +33,7 @@ if 'total_videos' not in st.session_state:
 if 'completed_videos' not in st.session_state:
     st.session_state.completed_videos = 0
 
-# --- 3. UI ---
+# --- 3. UI (TU CÓDIGO ORIGINAL) ---
 st.markdown("---")
 playlist_status_box = st.empty()
 progress_bar = st.progress(0)
@@ -48,18 +43,24 @@ def clean_ansi(text):
     ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
     return ansi_escape.sub('', text)
 
-# --- 4. LOGGER ---
+# --- 4. LOGGER (TU CÓDIGO ORIGINAL CON DEBUGS AÑADIDOS) ---
 class MyLogger:
     def debug(self, msg):
+        # Mantenemos tu lógica original
         if msg.startswith('[download] Sleeping'):
             status_text.warning(f"💤 {clean_ansi(msg)}")
+        # Añadimos chivato para ver si hay error 403 oculto
+        if '403' in msg:
+            log_debug(f"ALERTA 403 DETECTADA: {msg}")
+            
     def info(self, msg): pass
-    def warning(self, msg): pass
+    def warning(self, msg): 
+        log_debug(f"WARNING: {msg}")
     def error(self, msg): 
         st.error(f"❌ {msg}")
-        debug_log(f"ERROR YT-DLP: {msg}") # 🐞 DEBUG
+        log_debug(f"ERROR: {msg}")
 
-# --- 5. HOOK CON PROGRESO ---
+# --- 5. HOOK CON PROGRESO (TU CÓDIGO ORIGINAL) ---
 def progress_hook(d):
     if d['status'] == 'downloading':
         p_text = clean_ansi(d.get('_percent_str', '0%'))
@@ -79,7 +80,6 @@ def progress_hook(d):
 
     elif d['status'] == 'finished':
         st.session_state.completed_videos += 1
-        debug_log(f"Archivo terminado: {d.get('filename')}") # 🐞 DEBUG
         
         total = st.session_state.total_videos
         done = st.session_state.completed_videos
@@ -90,6 +90,7 @@ def progress_hook(d):
             playlist_status_box.info(f"📦 Progreso Playlist: {done}/{total}")
         
         status_text.success("✅ Archivo completado.")
+        log_debug(f"Archivo finalizado: {d.get('filename')}")
 
 # --- 6. INPUTS ---
 url = st.text_input("🔗 Link de YouTube:", placeholder="Video o Playlist...")
@@ -101,7 +102,7 @@ if tipo == "MP4 (Video)":
 
 # --- 7. DESCARGA ---
 if st.button("INICIAR DESCARGA"):
-    debug_log("Botón pulsado. Iniciando limpieza...") # 🐞 DEBUG
+    log_debug("Botón pulsado. Iniciando...")
     if not url:
         st.warning("Escribe un link.")
     else:
@@ -115,7 +116,7 @@ if st.button("INICIAR DESCARGA"):
         status_text.empty()
 
         try:
-            debug_log("Extrayendo info del video/playlist...") # 🐞 DEBUG
+            log_debug("Intentando extraer info (extract_flat)...")
             # Extraemos info sin descargar
             with yt_dlp.YoutubeDL({'quiet': True, 'extract_flat': True}) as ydl:
                 info = ydl.extract_info(url, download=False)
@@ -126,10 +127,10 @@ if st.button("INICIAR DESCARGA"):
                     st.session_state.total_videos = 1
                 st.session_state.completed_videos = 0
                 st.session_state.playlist_title = clean_ansi(raw_title)
-            
-            debug_log(f"Titulo: {st.session_state.playlist_title}, Total videos: {st.session_state.total_videos}") # 🐞 DEBUG
 
-            # Opciones yt-dlp
+            log_debug(f"Info extraída. Video: {raw_title}")
+
+            # ### CAMBIO IMPORTANTE: AÑADIDO BLOQUEO ANTI-BOTS (HEADERS)
             ydl_opts = {
                 'outtmpl': f'{DOWNLOAD_PATH}/%(title)s.%(ext)s',
                 'progress_hooks': [progress_hook],
@@ -142,6 +143,11 @@ if st.button("INICIAR DESCARGA"):
                 'concurrent_fragment_downloads': 8,
                 'sleep_interval': 2,      
                 'max_sleep_interval': 5, 
+                # --- AQUÍ ESTÁ LA SOLUCIÓN AL ERROR 403 ---
+                'http_headers': {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.159 Safari/537.36',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                }
             }
 
             if tipo == "MP3 (Audio)":
@@ -159,27 +165,27 @@ if st.button("INICIAR DESCARGA"):
                     'merge_output_format': 'mp4',
                 })
 
-            debug_log("Iniciando descarga real con yt-dlp...") # 🐞 DEBUG
+            log_debug("Iniciando ydl.download()...")
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
             
-            debug_log("Descarga finalizada por yt-dlp.") # 🐞 DEBUG
+            log_debug("Función download terminada.")
             st.session_state.download_ready = True
             playlist_status_box.success(f"Descarga de {st.session_state.playlist_title} completada 🎉")
             
-            # 🐞 DEBUG IMPORTANTE: Si esto no sale, es que Streamlit no se refresca
-            debug_log("Forzando recarga (rerun) para mostrar botones...") 
+            # ### CAMBIO: Forzamos recarga para que salgan los botones
+            log_debug("Haciendo Rerun para mostrar botones...")
             st.rerun()
 
         except Exception as e:
-            debug_log(f"CRASH: {str(e)}") # 🐞 DEBUG
+            log_debug(f"EXCEPCIÓN CRÍTICA: {e}")
             st.error(f"Error: {e}")
 
 # --- 8. DESCARGA FINAL ---
 if st.session_state.download_ready:
-    debug_log("Buscando archivos para crear botón...") # 🐞 DEBUG
+    log_debug("Renderizando botones de descarga final...")
     archivos = [f for f in os.listdir(DOWNLOAD_PATH) if os.path.isfile(os.path.join(DOWNLOAD_PATH, f))]
-    debug_log(f"Archivos encontrados: {archivos}") # 🐞 DEBUG
+    log_debug(f"Archivos encontrados: {len(archivos)}")
     
     if archivos:
         st.write("---")
@@ -194,16 +200,15 @@ if st.session_state.download_ready:
                         mime="video/mp4" if tipo == "MP4 (Video)" else "audio/mpeg",
                         key="descarga_ok"
                     )
-                # 🐞 AVISO: He comentado el remove aquí abajo porque si lo borras ANTES del click, falla.
+                # ### CAMBIO: COMENTADO EL REMOVE PARA QUE NO FALLE AL DAR CLICK
                 # os.remove(archivo_final) 
         else:
             clean_title = re.sub(r'[^\w\s-]', '', st.session_state.playlist_title).strip()
             if not clean_title: clean_title = "playlist"
             zip_name = f"{clean_title}.zip"
-            # Guardamos el ZIP en una ruta segura temporal
-            zip_path = os.path.join(tempfile.gettempdir(), f"{st.session_state.session_id}_{zip_name}")
+            # ### CAMBIO: Ruta del zip a tempfile seguro
+            zip_path = os.path.join(tempfile.gettempdir(), f"{st.session_state.session_id}_zip.zip")
             
-            debug_log(f"Creando ZIP en: {zip_path}") # 🐞 DEBUG
             with zipfile.ZipFile(zip_path, 'w') as zipf:
                 for file in archivos:
                     zipf.write(os.path.join(DOWNLOAD_PATH, file), file)
@@ -218,8 +223,13 @@ if st.session_state.download_ready:
                         key="descarga_zip_ok"
                     )
             
-            # 🐞 AVISO: El código original borraba aquí los archivos. 
-            # Lo he comentado porque si borras antes de que el usuario pulse "Download", el botón falla.
-            # La limpieza se hace automáticamente al INICIAR una nueva descarga (línea 110).
-    else:
-        debug_log("ERROR: La variable download_ready es True pero no hay archivos en la carpeta.") # 🐞 DEBUG
+            # Limpiamos archivos individuales (TU CÓDIGO)
+            # Nota: Esto está bien, pero recuerda que si borras aquí, el botón individual de arriba no funcionará si la logica entrase aquí.
+            # Como está dentro del "else" (para varios archivos), está bien.
+            for file in archivos:
+                file_path = os.path.join(DOWNLOAD_PATH, file)
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+            # Limpiamos zip
+            # if os.path.exists(zip_path):
+            #    os.remove(zip_path) # Comentado por seguridad del botón

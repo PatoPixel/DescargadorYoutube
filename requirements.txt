@@ -1,2 +1,2 @@
-yt-dlp
+git+https://github.com/yt-dlp/yt-dlp.git@master
 streamlit
