@@ -4,6 +4,19 @@ import os
 import shutil
 import zipfile
 import re
+# --- 1. CONFIGURACIÓN DE RUTAS (Modo Nube Blindado) ---
+import tempfile
+
+# En lugar de usar "downloads" en la raíz, usamos el directorio temporal del sistema
+# Esto evita CUALQUIER problema de permisos o de carpetas no creadas.
+DOWNLOAD_PATH = os.path.join(tempfile.gettempdir(), "mis_descargas")
+
+if not os.path.exists(DOWNLOAD_PATH):
+    os.makedirs(DOWNLOAD_PATH)
+    print(f"📁 Carpeta creada en: {DOWNLOAD_PATH}")
+else:
+    print(f"📁 Usando carpeta existente: {DOWNLOAD_PATH}")
+
 
 st.set_page_config(page_title="Descargador YouTube", page_icon="⬇️")
 st.title("Descargador YouTube")
