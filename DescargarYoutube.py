@@ -4,28 +4,16 @@ import os
 import shutil
 import zipfile
 import re
-# --- 1. CONFIGURACIÓN DE RUTAS (Modo Nube Blindado) ---
 import tempfile
 
-# En lugar de usar "downloads" en la raíz, usamos el directorio temporal del sistema
-# Esto evita CUALQUIER problema de permisos o de carpetas no creadas.
+# --- 1. CONFIGURACIÓN DE RUTAS (Modo Nube Blindado) ---
 DOWNLOAD_PATH = os.path.join(tempfile.gettempdir(), "mis_descargas")
-
-if not os.path.exists(DOWNLOAD_PATH):
-    os.makedirs(DOWNLOAD_PATH)
-    print(f"📁 Carpeta creada en: {DOWNLOAD_PATH}")
-else:
-    print(f"📁 Usando carpeta existente: {DOWNLOAD_PATH}")
-
+os.makedirs(DOWNLOAD_PATH, exist_ok=True)
 
 st.set_page_config(page_title="Descargador YouTube", page_icon="⬇️")
 st.title("Descargador YouTube")
 
-# --- 1. CONFIGURACIÓN DE RUTAS ---
-DOWNLOAD_PATH = os.path.join(os.getcwd(), "downloads")
-if not os.path.exists(DOWNLOAD_PATH):
-    os.makedirs(DOWNLOAD_PATH)
-
+# --- 2. SESSION STATE ---
 if 'download_ready' not in st.session_state:
     st.session_state.download_ready = False
 if 'playlist_title' not in st.session_state:
@@ -35,9 +23,7 @@ if 'total_videos' not in st.session_state:
 if 'completed_videos' not in st.session_state:
     st.session_state.completed_videos = 0
 
-
-
-# --- 2. UI ---
+# --- 3. UI ---
 st.markdown("---")
 playlist_status_box = st.empty()
 progress_bar = st.progress(0)
@@ -47,17 +33,16 @@ def clean_ansi(text):
     ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
     return ansi_escape.sub('', text)
 
-# --- 3. LOGGER ---
+# --- 4. LOGGER ---
 class MyLogger:
     def debug(self, msg):
         if msg.startswith('[download] Sleeping'):
-            clean_msg = clean_ansi(msg)
-            status_text.warning(f"💤 {clean_msg}")
+            status_text.warning(f"💤 {clean_ansi(msg)}")
     def info(self, msg): pass
     def warning(self, msg): pass
     def error(self, msg): print(f"❌ {msg}")
 
-# --- 4. HOOK CON PROGRESO ---
+# --- 5. HOOK CON PROGRESO ---
 def progress_hook(d):
     if d['status'] == 'downloading':
         p_text = clean_ansi(d.get('_percent_str', '0%'))
@@ -67,13 +52,13 @@ def progress_hook(d):
         try:
             p_number = float(p_text.replace('%','').strip()) / 100
             progress_bar.progress(min(max(p_number, 0.0), 1.0))
-            status_text.text(f"Velocidad Descarga: {s_text} | Completado: {p_text} | Falta: {e_text}")
+            status_text.text(f"Velocidad: {s_text} | Completado: {p_text} | Falta: {e_text}")
         except: pass
 
         idx = d.get('playlist_index')
         total = d.get('playlist_count') or d.get('n_entries')
         if idx and total:
-            playlist_status_box.info(f"💽 **Video {idx} de {total}**")
+            playlist_status_box.info(f"💽 Video {idx} de {total}")
 
     elif d['status'] == 'finished':
         st.session_state.completed_videos += 1
@@ -88,8 +73,7 @@ def progress_hook(d):
         
         status_text.success("✅ Archivo completado.")
 
-
-# --- 5. INPUTS ---
+# --- 6. INPUTS ---
 url = st.text_input("🔗 Link de YouTube:", placeholder="Video o Playlist...")
 tipo = st.radio("💿 Formato:", ["MP4 (Video)", "MP3 (Audio)"])
 
@@ -97,20 +81,22 @@ calidad = "1080"
 if tipo == "MP4 (Video)":
     calidad = st.selectbox("Calidad Máxima:", ["2160", "1440", "1080", "720"])
 
-# --- 6. LÓGICA TURBO ---
+# --- 7. DESCARGA ---
 if st.button("INICIAR DESCARGA"):
     if not url:
         st.warning("Escribe un link.")
     else:
+        # Limpiamos carpeta
         if os.path.exists(DOWNLOAD_PATH):
             shutil.rmtree(DOWNLOAD_PATH)
-        os.makedirs(DOWNLOAD_PATH)
+        os.makedirs(DOWNLOAD_PATH, exist_ok=True)
         
         st.session_state.download_ready = False
         playlist_status_box.empty()
         status_text.empty()
 
         try:
+            # Extraemos info sin descargar
             with yt_dlp.YoutubeDL({'quiet': True, 'extract_flat': True}) as ydl:
                 info = ydl.extract_info(url, download=False)
                 raw_title = info.get('title', 'descarga_youtube')
@@ -118,11 +104,10 @@ if st.button("INICIAR DESCARGA"):
                     st.session_state.total_videos = len(info['entries'])
                 else:
                     st.session_state.total_videos = 1
-
                 st.session_state.completed_videos = 0
-
                 st.session_state.playlist_title = clean_ansi(raw_title)
 
+            # Opciones yt-dlp
             ydl_opts = {
                 'outtmpl': f'{DOWNLOAD_PATH}/%(title)s.%(ext)s',
                 'progress_hooks': [progress_hook],
@@ -132,11 +117,7 @@ if st.button("INICIAR DESCARGA"):
                 'noprogress': False,
                 'quiet': False, 
                 'no_color': True,
-                
-                # --- AQUÍ ESTÁ LA VELOCIDAD ---
-                'concurrent_fragment_downloads': 8, # <--- ¡ESTO ACELERA LA DESCARGA!
-                
-                # Reducimos la espera un poco (Equilibrio Rapidez/Seguridad)
+                'concurrent_fragment_downloads': 8,
                 'sleep_interval': 2,      
                 'max_sleep_interval': 5, 
             }
@@ -152,7 +133,6 @@ if st.button("INICIAR DESCARGA"):
                 })
             else:
                 ydl_opts.update({
-                    # Forzamos MP4 + M4A (AAC)
                     'format': f'bestvideo[height<={calidad}][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
                     'merge_output_format': 'mp4',
                 })
@@ -161,12 +141,12 @@ if st.button("INICIAR DESCARGA"):
                 ydl.download([url])
             
             st.session_state.download_ready = True
-            playlist_status_box.success(f"Descarga de {st.session_state.playlist_title} Completada ")
+            playlist_status_box.success(f"Descarga de {st.session_state.playlist_title} completada 🎉")
 
         except Exception as e:
             st.error(f"Error: {e}")
 
-# --- 7. DESCARGA FINAL ---
+# --- 8. DESCARGA FINAL ---
 if st.session_state.download_ready:
     archivos = [f for f in os.listdir(DOWNLOAD_PATH) if os.path.isfile(os.path.join(DOWNLOAD_PATH, f))]
     
@@ -174,42 +154,41 @@ if st.session_state.download_ready:
         st.write("---")
         if len(archivos) == 1:
             archivo_final = os.path.join(DOWNLOAD_PATH, archivos[0])
-            with open(archivo_final, "rb") as f:
-                st.download_button(
-                    label=f"⬇️ Descargar: {archivos[0]}",
-                    data=f,
-                    file_name=archivos[0],
-                    mime="video/mp4" if tipo == "MP4 (Video)" else "audio/mpeg",
-                    key="descarga_ok"
-                )
-            # 🔥 Eliminamos el archivo después de generar el botón
             if os.path.exists(archivo_final):
+                with open(archivo_final, "rb") as f:
+                    st.download_button(
+                        label=f"⬇️ Descargar: {archivos[0]}",
+                        data=f,
+                        file_name=archivos[0],
+                        mime="video/mp4" if tipo == "MP4 (Video)" else "audio/mpeg",
+                        key="descarga_ok"
+                    )
                 os.remove(archivo_final)
         else:
             clean_title = re.sub(r'[^\w\s-]', '', st.session_state.playlist_title).strip()
             if not clean_title: clean_title = "playlist"
             zip_name = f"{clean_title}.zip"
-            zip_path = os.path.join(os.getcwd(), zip_name)
+            zip_path = os.path.join(tempfile.gettempdir(), zip_name)
             
             with zipfile.ZipFile(zip_path, 'w') as zipf:
                 for file in archivos:
                     zipf.write(os.path.join(DOWNLOAD_PATH, file), file)
             
-            with open(zip_path, "rb") as f:
-                st.download_button(
-                    label=f"⬇️ DESCARGAR ZIP",
-                    data=f,
-                    file_name=zip_name,
-                    mime="application/zip",
-                    key="descarga_zip_ok"
-                )
-
-            # 🔥 Limpiamos archivos individuales también
+            if os.path.exists(zip_path):
+                with open(zip_path, "rb") as f:
+                    st.download_button(
+                        label=f"⬇️ DESCARGAR ZIP",
+                        data=f,
+                        file_name=zip_name,
+                        mime="application/zip",
+                        key="descarga_zip_ok"
+                    )
+            
+            # Limpiamos archivos individuales
             for file in archivos:
                 file_path = os.path.join(DOWNLOAD_PATH, file)
                 if os.path.exists(file_path):
                     os.remove(file_path)
-
-            # 🔥 Eliminamos el zip final
+            # Limpiamos zip
             if os.path.exists(zip_path):
                 os.remove(zip_path)
