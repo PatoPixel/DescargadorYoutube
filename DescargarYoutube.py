@@ -6,9 +6,14 @@ import zipfile
 import re
 import tempfile
 
-# --- 1. CONFIGURACIÓN DE RUTAS (Modo Nube Blindado) ---
-DOWNLOAD_PATH = os.path.join(tempfile.gettempdir(), "mis_descargas")
-os.makedirs(DOWNLOAD_PATH, exist_ok=True)
+# --- 1. CONFIGURACIÓN DE RUTAS ---
+# Cambio menor: Carpeta única por sesión para que no choque con otros usuarios en la nube
+if 'session_id' not in st.session_state:
+    st.session_state.session_id = next(tempfile._get_candidate_names())
+
+DOWNLOAD_PATH = os.path.join(tempfile.gettempdir(), f"descargas_{st.session_state.session_id}")
+if not os.path.exists(DOWNLOAD_PATH):
+    os.makedirs(DOWNLOAD_PATH, exist_ok=True)
 
 st.set_page_config(page_title="Descargador YouTube", page_icon="⬇️")
 st.title("Descargador YouTube")
@@ -62,7 +67,6 @@ def progress_hook(d):
 
     elif d['status'] == 'finished':
         st.session_state.completed_videos += 1
-        
         total = st.session_state.total_videos
         done = st.session_state.completed_videos
         
@@ -86,7 +90,7 @@ if st.button("INICIAR DESCARGA"):
     if not url:
         st.warning("Escribe un link.")
     else:
-        # Limpiamos carpeta
+        # Limpiamos carpeta antes de empezar nueva descarga
         if os.path.exists(DOWNLOAD_PATH):
             shutil.rmtree(DOWNLOAD_PATH)
         os.makedirs(DOWNLOAD_PATH, exist_ok=True)
@@ -96,7 +100,6 @@ if st.button("INICIAR DESCARGA"):
         status_text.empty()
 
         try:
-            # Extraemos info sin descargar
             with yt_dlp.YoutubeDL({'quiet': True, 'extract_flat': True}) as ydl:
                 info = ydl.extract_info(url, download=False)
                 raw_title = info.get('title', 'descarga_youtube')
@@ -107,7 +110,6 @@ if st.button("INICIAR DESCARGA"):
                 st.session_state.completed_videos = 0
                 st.session_state.playlist_title = clean_ansi(raw_title)
 
-            # Opciones yt-dlp
             ydl_opts = {
                 'outtmpl': f'{DOWNLOAD_PATH}/%(title)s.%(ext)s',
                 'progress_hooks': [progress_hook],
@@ -118,8 +120,6 @@ if st.button("INICIAR DESCARGA"):
                 'quiet': False, 
                 'no_color': True,
                 'concurrent_fragment_downloads': 8,
-                'sleep_interval': 2,      
-                'max_sleep_interval': 5, 
             }
 
             if tipo == "MP3 (Audio)":
@@ -141,7 +141,8 @@ if st.button("INICIAR DESCARGA"):
                 ydl.download([url])
             
             st.session_state.download_ready = True
-            playlist_status_box.success(f"Descarga de {st.session_state.playlist_title} completada 🎉")
+            # CAMBIO CLAVE: Forzamos a Streamlit a refrescar para ver el botón de descarga
+            st.rerun()
 
         except Exception as e:
             st.error(f"Error: {e}")
@@ -163,12 +164,12 @@ if st.session_state.download_ready:
                         mime="video/mp4" if tipo == "MP4 (Video)" else "audio/mpeg",
                         key="descarga_ok"
                     )
-                os.remove(archivo_final)
+                # IMPORTANTE: No borramos el archivo aquí o el botón fallará al hacer clic
         else:
             clean_title = re.sub(r'[^\w\s-]', '', st.session_state.playlist_title).strip()
             if not clean_title: clean_title = "playlist"
             zip_name = f"{clean_title}.zip"
-            zip_path = os.path.join(tempfile.gettempdir(), zip_name)
+            zip_path = os.path.join(tempfile.gettempdir(), f"{st.session_state.session_id}.zip")
             
             with zipfile.ZipFile(zip_path, 'w') as zipf:
                 for file in archivos:
@@ -177,18 +178,9 @@ if st.session_state.download_ready:
             if os.path.exists(zip_path):
                 with open(zip_path, "rb") as f:
                     st.download_button(
-                        label=f"⬇️ DESCARGAR ZIP",
+                        label=f"⬇️ DESCARGAR ZIP: {zip_name}",
                         data=f,
                         file_name=zip_name,
                         mime="application/zip",
                         key="descarga_zip_ok"
                     )
-            
-            # Limpiamos archivos individuales
-            for file in archivos:
-                file_path = os.path.join(DOWNLOAD_PATH, file)
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-            # Limpiamos zip
-            if os.path.exists(zip_path):
-                os.remove(zip_path)
